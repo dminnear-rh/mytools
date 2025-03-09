@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""
+json-pretty: Reformat a messy JSON snippet into human-readable output.
+
+Usage:
+  json-pretty [FILE]
+
+If FILE is provided, the JSON is read from that file.
+If no FILE is provided and JSON is piped in (or provided via a heredoc), it is read from standard input.
+If no FILE is provided and standard input is interactive, this usage information is printed.
+
+The output is printed to standard output.
+"""
+
+import sys
+import json
+
+def usage():
+    print(__doc__)
+
+def main():
+    # No command-line argument.
+    if len(sys.argv) == 1:
+        # If STDIN is interactive, print usage.
+        if sys.stdin.isatty():
+            usage()
+            sys.exit(0)
+        else:
+            try:
+                data = json.load(sys.stdin)
+            except Exception as e:
+                sys.exit(f"Error reading JSON from stdin: {e}")
+    # If user asks for help.
+    elif sys.argv[1] in ("help", "--help"):
+        usage()
+        sys.exit(0)
+    else:
+        filepath = sys.argv[1]
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception as e:
+            sys.exit(f"Error reading JSON file: {e}")
+
+    # Dump JSON with indentation.
+    pretty = json.dumps(data, indent=2, ensure_ascii=False)
+    # Unescape escape sequences so that \n, \t, and \" become literal newline, tab, and quote.
+    try:
+        cleaned = bytes(pretty, "utf-8").decode("unicode_escape")
+    except Exception as e:
+        cleaned = pretty
+
+    print(cleaned)
+
+if __name__ == '__main__':
+    main()
