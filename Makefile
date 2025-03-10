@@ -4,17 +4,20 @@ MAKEFILE_DIR := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 # Target directory for symlinks
 BIN_DIR := $(HOME)/.local/bin
 
-# List of tools and their symlink targets
-TOOLS := kubeconfig json-pretty
-TOOL_PATHS := $(patsubst %, $(BIN_DIR)/%, $(TOOLS))
+# Define the correct mappings for scripts
+KUBECONFIG_SCRIPT := $(MAKEFILE_DIR)/kubeconfig-env-setter/kubeconfig
+JSON_PRETTY_SCRIPT := $(MAKEFILE_DIR)/json-pretty/json-pretty
 
 # Default target
 .PHONY: all
 all: install
 
-# Create symlinks for all tools
+# Ensure ~/.local/bin exists before creating symlinks
 .PHONY: install
-install: $(TOOL_PATHS)
+install:
+	@mkdir -p $(BIN_DIR)
+	ln -sf $(KUBECONFIG_SCRIPT) $(BIN_DIR)/kubeconfig
+	ln -sf $(JSON_PRETTY_SCRIPT) $(BIN_DIR)/json-pretty
 	@echo "Symlinks created successfully!"
 	@if ! echo "$$PATH" | grep -q "$(BIN_DIR)"; then \
 		echo "⚠️  Warning: $(BIN_DIR) is not in your PATH."; \
@@ -24,14 +27,9 @@ install: $(TOOL_PATHS)
 		echo ""; \
 	fi
 
-# Ensure ~/.local/bin exists before creating symlinks
-$(BIN_DIR)/%: $(MAKEFILE_DIR)/% 
-	@mkdir -p $(BIN_DIR)
-	ln -sf $< $@
-
 # Remove symlinks
 .PHONY: uninstall
 uninstall:
 	@echo "Removing symlinks..."
-	@rm -f $(TOOL_PATHS)
+	@rm -f $(BIN_DIR)/kubeconfig $(BIN_DIR)/json-pretty
 	@echo "Symlinks removed successfully."
