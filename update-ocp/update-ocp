@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BASE_URL="https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp"
+DEFAULT_INSTALL_DIR="/usr/local/bin"
+CLIENT_TARBALL="openshift-client-linux.tar.gz"
+INSTALLER_TARBALL="openshift-install-linux.tar.gz"
+
+usage() {
+    cat <<'EOF'
+Usage: update-ocp [COMMAND]
+
+Download and install OpenShift binaries from the official Red Hat mirror.
+
+Commands:
+  all         Install/update oc, kubectl, and openshift-install (default)
+  client      Install/update only oc and kubectl
+  installer   Install/update only openshift-install
+  help        Show this help message
+
+Environment Variables:
+  OCP_INSTALL_DIR   Default install directory when a binary is not already
+                    installed (default: /usr/local/bin)
+  OCP_VERSION       Version channel to download (default: stable)
+                    Examples: stable, latest-4.15, 4.15.0, candidate
+EOF
+}
+
+info() {
+    echo "==> $*"
+}
+
+error_exit() {
+    echo "error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ -n "${TMPDIR:-}" && -d "$TMPDIR" ]]; then
+        rm -rf "$TMPDIR"
+    fi
+}
+
+check_dependencies() {
+    local missing=()
+    for cmd in curl tar; do
+        if ! command -v "$cmd" &>/dev/null; then
+            missing+=("$cmd")
+        fi
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        error_exit "missing required commands: ${missing[*]}"
+    fi
+}
+
+resolve_install_dir() {
+    local binary_name="$1"
+    local existing
+    existing=$(command -v "$binary_name" 2>/dev/null || true)
+    if [[ -n "$existing" ]]; then
+        dirname "$existing"
+    else
+        echo "${OCP_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+    fi
+}
+
+run_install() {
+    local source="$1"
+    local dest_dir="$2"
+    local binary_name
+    binary_name=$(basename "$source")
+
+    if [[ ! -w "$dest_dir" ]]; then
+        info "Installing $binary_name to $dest_dir (requires sudo)"
+        sudo install -m 0755 "$source" "$dest_dir/"
+    else
+        info "Installing $binary_name to $dest_dir"
+        install -m 0755 "$source" "$dest_dir/"
+    fi
+}
+
+download_and_extract() {
+    local tarball_name="$1"
+    local temp_dir="$2"
+    local version="${OCP_VERSION:-stable}"
+    local url="${BASE_URL}/${version}/${tarball_name}"
+
+    info "Downloading $url"
+    curl -fSL --progress-bar -o "${temp_dir}/${tarball_name}" "$url"
+    tar xzf "${temp_dir}/${tarball_name}" -C "${temp_dir}"
+}
+
+install_client() {
+    local temp_dir="$1"
+    download_and_extract "$CLIENT_TARBALL" "$temp_dir"
+
+    for binary in oc kubectl; do
+        local dest_dir
+        dest_dir=$(resolve_install_dir "$binary")
+        run_install "${temp_dir}/${binary}" "$dest_dir"
+    done
+
+    info "Installed client version:"
+    "${temp_dir}/oc" version --client 2>/dev/null || true
+}
+
+install_installer() {
+    local temp_dir="$1"
+    download_and_extract "$INSTALLER_TARBALL" "$temp_dir"
+
+    local dest_dir
+    dest_dir=$(resolve_install_dir "openshift-install")
+    run_install "${temp_dir}/openshift-install" "$dest_dir"
+
+    info "Installed installer version:"
+    "${temp_dir}/openshift-install" version 2>/dev/null || true
+}
+
+trap cleanup EXIT
+
+case "${1:-all}" in
+    help|--help|-h)
+        usage
+        exit 0
+        ;;
+    all)
+        check_dependencies
+        TMPDIR=$(mktemp -d)
+        info "Using version channel: ${OCP_VERSION:-stable}"
+        install_client "$TMPDIR"
+        install_installer "$TMPDIR"
+        ;;
+    client)
+        check_dependencies
+        TMPDIR=$(mktemp -d)
+        info "Using version channel: ${OCP_VERSION:-stable}"
+        install_client "$TMPDIR"
+        ;;
+    installer)
+        check_dependencies
+        TMPDIR=$(mktemp -d)
+        info "Using version channel: ${OCP_VERSION:-stable}"
+        install_installer "$TMPDIR"
+        ;;
+    *)
+        error_exit "unknown command: $1 (see 'update-ocp help')"
+        ;;
+esac
+
+info "Done."

@@ -24,6 +24,16 @@ A collection of small but useful command-line tools to improve productivity and 
 
 ---
 
+### 3️⃣ [`update-ocp`](./update-ocp/)
+**Download and install OpenShift client and installer binaries.**  
+- Downloads `oc`, `kubectl`, and `openshift-install` from the official Red Hat mirror.  
+- Replaces existing binaries in-place or installs to `/usr/local/bin`.  
+- Supports selective installation (client-only or installer-only).
+
+👉 [Read More](./update-ocp/README.md)
+
+---
+
 ## 📥 Installation
 
 To make these tools easily accessible from anywhere, symlink them into `~/.local/bin` using the included Makefile:
