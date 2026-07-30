@@ -8,6 +8,7 @@ BIN_DIR := $(HOME)/.local/bin
 KUBECONFIG_SCRIPT := $(MAKEFILE_DIR)/kubeconfig-env-setter/kubeconfig
 JSON_PRETTY_SCRIPT := $(MAKEFILE_DIR)/json-pretty/json-pretty
 UPDATE_OCP_SCRIPT := $(MAKEFILE_DIR)/update-ocp/update-ocp
+HCP_NUKE_CLUSTER_SCRIPT := $(MAKEFILE_DIR)/hcp-nuke-cluster/hcp-nuke-cluster
 
 # Default target
 .PHONY: all
@@ -20,6 +21,7 @@ install:
 	ln -sf $(KUBECONFIG_SCRIPT) $(BIN_DIR)/kubeconfig
 	ln -sf $(JSON_PRETTY_SCRIPT) $(BIN_DIR)/json-pretty
 	ln -sf $(UPDATE_OCP_SCRIPT) $(BIN_DIR)/update-ocp
+	ln -sf $(HCP_NUKE_CLUSTER_SCRIPT) $(BIN_DIR)/hcp-nuke-cluster
 	@echo "Symlinks created successfully!"
 	@if ! echo "$$PATH" | grep -q "$(BIN_DIR)"; then \
 		echo "⚠️  Warning: $(BIN_DIR) is not in your PATH."; \
@@ -33,5 +35,5 @@ install:
 .PHONY: uninstall
 uninstall:
 	@echo "Removing symlinks..."
-	@rm -f $(BIN_DIR)/kubeconfig $(BIN_DIR)/json-pretty $(BIN_DIR)/update-ocp
+	@rm -f $(BIN_DIR)/kubeconfig $(BIN_DIR)/json-pretty $(BIN_DIR)/update-ocp $(BIN_DIR)/hcp-nuke-cluster
 	@echo "Symlinks removed successfully."

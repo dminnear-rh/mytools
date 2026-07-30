@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DEFAULT_REGION="us-west-2"
+DEFAULT_STS_CREDS="${HOME}/.aws/sts-creds/sts-creds.json"
+DEFAULT_ROLE_NAME="hypershift_cli_role"
+DEFAULT_BASE_DOMAIN="aws.validatedpatterns.io"
+
+usage() {
+    cat <<'EOF'
+Usage: hcp-nuke-cluster <cluster-name>
+
+Force-destroy a hosted control plane cluster and clean up all stubborn
+ManagedCluster resources, finalizers, and orphaned namespace artifacts
+that persist after a normal destroy.
+
+Steps performed:
+  1. hcp destroy cluster aws (non-fatal if partially removed)
+  2. Delete ManagedCluster and strip its finalizers
+  3. Strip finalizers from ManifestWorks and ManagedClusterAddOns
+  4. Delete the orphaned hub namespace and strip its finalizers
+
+Environment Variables:
+  HCP_REGION        AWS region (default: us-west-2)
+  HCP_STS_CREDS     Path to STS credentials JSON
+                    (default: $HOME/.aws/sts-creds/sts-creds.json)
+  HCP_ROLE_NAME     IAM role name; ARN is resolved automatically
+                    (default: hypershift_cli_role)
+  HCP_BASE_DOMAIN   Route53 base domain (default: aws.validatedpatterns.io)
+EOF
+}
+
+info() {
+    echo "==> $*"
+}
+
+error_exit() {
+    echo "error: $*" >&2
+    exit 1
+}
+
+check_dependencies() {
+    local missing=()
+    for cmd in oc hcp aws; do
+        if ! command -v "$cmd" &>/dev/null; then
+            missing+=("$cmd")
+        fi
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        error_exit "missing required commands: ${missing[*]}"
+    fi
+}
+
+resolve_role_arn() {
+    local role_name="$1"
+    local role_arn
+    role_arn=$(aws iam get-role --role-name "${role_name}" --query 'Role.Arn' --output text 2>/dev/null) \
+        || error_exit "failed to resolve ARN for role '${role_name}' — check AWS credentials and role name"
+    echo "$role_arn"
+}
+
+case "${1:-}" in
+    help|--help|-h)
+        usage
+        exit 0
+        ;;
+    "")
+        error_exit "cluster name required (see 'hcp-nuke-cluster --help')"
+        ;;
+esac
+
+CLUSTER_NAME="$1"
+REGION="${HCP_REGION:-$DEFAULT_REGION}"
+STS_CREDS="${HCP_STS_CREDS:-$DEFAULT_STS_CREDS}"
+ROLE_NAME="${HCP_ROLE_NAME:-$DEFAULT_ROLE_NAME}"
+BASE_DOMAIN="${HCP_BASE_DOMAIN:-$DEFAULT_BASE_DOMAIN}"
+
+check_dependencies
+
+info "Resolving ARN for role '${ROLE_NAME}'..."
+ROLE_ARN=$(resolve_role_arn "$ROLE_NAME")
+info "Using role ARN: ${ROLE_ARN}"
+
+echo "=================================================="
+echo "Starting cleanup process for cluster: ${CLUSTER_NAME}"
+echo "=================================================="
+
+# Step 1: Destroy HCP AWS resources
+info "Step 1: Destroying HostedCluster AWS resources..."
+hcp destroy cluster aws \
+    --name "${CLUSTER_NAME}" \
+    --region "${REGION}" \
+    --sts-creds "${STS_CREDS}" \
+    --role-arn "${ROLE_ARN}" \
+    --infra-id "${CLUSTER_NAME}" \
+    --base-domain "${BASE_DOMAIN}" \
+    || echo "Warning: hcp destroy encountered an issue or cluster was partially removed. Continuing with ACM cleanup."
+
+# Step 2: Delete ManagedCluster and strip finalizers
+if oc --as=system:admin get managedcluster "${CLUSTER_NAME}" &>/dev/null; then
+    info "Step 2: Cleaning up ManagedCluster resource..."
+    oc --as=system:admin delete managedcluster "${CLUSTER_NAME}" --wait=false &>/dev/null || true
+
+    info "Stripping finalizers from ManagedCluster/${CLUSTER_NAME}..."
+    oc --as=system:admin patch managedcluster "${CLUSTER_NAME}" --type=merge \
+        -p='{"metadata":{"finalizers":null}}' || true
+else
+    info "Step 2: ManagedCluster/${CLUSTER_NAME} not found. Skipping."
+fi
+
+# Step 3: Clean up orphaned resources in the hub namespace
+if oc --as=system:admin get ns "${CLUSTER_NAME}" &>/dev/null; then
+    info "Step 3: Cleaning up orphaned namespace components in '${CLUSTER_NAME}'..."
+
+    manifest_works=$(oc --as=system:admin get manifestwork -n "${CLUSTER_NAME}" -o name 2>/dev/null || true)
+    if [[ -n "${manifest_works}" ]]; then
+        info "Stripping finalizers from remaining ManifestWorks..."
+        for mw in ${manifest_works}; do
+            oc --as=system:admin patch "${mw}" -n "${CLUSTER_NAME}" --type=merge \
+                -p='{"metadata":{"finalizers":null}}' || true
+        done
+    fi
+
+    addons=$(oc --as=system:admin get managedclusteraddon -n "${CLUSTER_NAME}" -o name 2>/dev/null || true)
+    if [[ -n "${addons}" ]]; then
+        info "Stripping finalizers from remaining ManagedClusterAddOns..."
+        for addon in ${addons}; do
+            oc --as=system:admin patch "${addon}" -n "${CLUSTER_NAME}" --type=merge \
+                -p='{"metadata":{"finalizers":null}}' || true
+        done
+    fi
+
+    # Step 4: Delete orphaned namespace
+    info "Step 4: Removing hub namespace '${CLUSTER_NAME}'..."
+    oc --as=system:admin delete ns "${CLUSTER_NAME}" --wait=false 2>/dev/null || true
+    oc --as=system:admin patch ns "${CLUSTER_NAME}" --type=merge \
+        -p='{"metadata":{"finalizers":null}}' || true
+else
+    info "Step 3: Namespace '${CLUSTER_NAME}' not found. Skipping."
+fi
+
+echo "=================================================="
+echo "Nuke process complete for ${CLUSTER_NAME}!"
+echo "=================================================="
